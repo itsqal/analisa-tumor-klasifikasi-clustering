@@ -1,79 +1,151 @@
 import streamlit as st
+import pandas as pd
+import numpy as np
 import joblib
 import matplotlib.pyplot as plt
-from sklearn.metrics import accuracy_score
-from sklearn.preprocessing import LabelEncoder
-import pandas as pd
-from dataset import X, y
+from sklearn.preprocessing import RobustScaler
 
-rf_model = joblib.load("./clf_model_breast_cancer.pkl")
-# confusion_matrix_image = "./Confusion Matrix Model.png"
-# pca_image = "./K-means_PCA_breast_cancer_classification.png"
+st.set_page_config(
+    page_title="Dasbor Analisis Tumor Payudara", 
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-label_encoder = LabelEncoder()
-label_encoder.fit(['B', 'M'])
-y_encoded = label_encoder.transform(y.values.ravel())
+def create_placeholder_plot(title="Contoh Plot"): 
+    fig, ax = plt.subplots()
+    ax.plot([1, 2, 3], [1, 4, 9])
+    ax.set_title(title)
+    ax.set_xlabel("Sumbu X")
+    ax.set_ylabel("Sumbu Y")
+    ax.grid(True)
+    return fig
 
-# Prediksi akurasi model
-y_pred = rf_model.predict(X)
-accuracy = accuracy_score(y_encoded, y_pred)
+def main():
+    model = joblib.load('clf_model_breast_cancer.pkl')
 
-st.sidebar.title("Navigasi")
-page = st.sidebar.radio("Pilih Halaman", ("Performa Model", "Prediksi Model"))
+    with st.sidebar:
+        st.title("📁 Kontrol Input")
+        st.markdown("---")
+        uploaded_file = st.file_uploader(
+            "Upload file CSV:",
+            type=["csv"],
+            help="Upload file CSV dengan data observasi tumor."
+        )
+        st.markdown("---")
+        st.info("Pastikan Anda memasukkan data dengan fitur yang tepat untuk memperoleh hasil prediksi terbaik!")
 
-# **Model Performance Page**
-if page == "Performa Model":
-    st.title('Model Klasifikasi Tumor Payudara - Performance')
-
+    st.title("Dashboard analisis tumor payudara")
     st.markdown("""
-    ### Deskripsi Dataset dan Algoritma
-
-    **Dataset:**  
-    Dataset yang digunakan adalah dataset kanker payudara yang tersedia di UCI Machine Learning Repository. Dataset ini terdiri dari 30 fitur yang menggambarkan berbagai karakteristik kanker payudara, seperti ukuran massa tumor, bentuk, dan lainnya. Label kelas terbagi menjadi dua kategori, yaitu 'M' untuk malignant (kanker ganas) dan 'B' untuk benign (kanker jinak). Dataset ini digunakan untuk melakukan klasifikasi apakah tumor tersebut benign atau malignant berdasarkan fitur-fitur yang ada.
-
-    **Algoritma yang Digunakan:**  
-    Pada dashboard ini, digunakan algoritma **Random Forest**, yang merupakan ensemble method yang menggunakan banyak decision trees untuk melakukan prediksi. Random Forest membangun banyak pohon keputusan pada subset acak dari data dan memberikan hasil prediksi dengan cara mayoritas voting pada prediksi dari setiap pohon.
-
-    **Metode yang Digunakan:**  
-    Model **Random Forest** ini dilatih menggunakan data fitur dari dataset kanker payudara dan label kelasnya ('M' atau 'B'). Model ini kemudian diuji untuk mengukur akurasi prediksinya. Selain itu, untuk memahami hubungan antar fitur, dilakukan **Principal Component Analysis (PCA)** untuk mengurangi dimensi data dan memvisualisasikan hubungan antar data dalam dua dimensi.
+        Selamat Datang! Dashboard ini dapat memberikan prediksi berdasarkan data Anda dan menunjukkan performa model yang kami gunakan.
     """)
 
-    # Menampilkan akurasi model
-    st.subheader(f"Model Accuracy: {accuracy * 100:.2f}%")
+    tab1_predict, tab2_results = st.tabs([
+        "📈 Prediksi dari data",
+        "💡 Pemodelan & Clustering" 
+    ])
 
-    # # Confusion matrix
-    # st.subheader("Confusion Matrix")
-    # st.image(confusion_matrix_image, caption="Confusion Matrix")
+    with tab1_predict:
+        st.header("🔮 Analisis dan prediksi data")
+        st.markdown("Upload file CSV melalui kontrol di samping layar Anda.")
 
-    # # Hasil PCA plot
-    # st.subheader("PCA Visualization")
-    # st.image(pca_image, caption="PCA Clustering Visualization")
+        if uploaded_file is not None:
+            st.success(f"File '{uploaded_file.name}' berhasil diunggah!")
+            try:
+                df_input = pd.read_csv(uploaded_file)
+                df_input_scaled = RobustScaler().fit_transform(df_input)
+                
+                st.subheader("📋 Preview Data") 
+                st.dataframe(df_input.head(), use_container_width=True)
 
-if page == "Prediksi Model":
-    st.title('Model Klasifikasi Tumor Payudara - Prediksi')
+                st.markdown("---")
+                
+                num_rows = len(df_input)
 
-    st.subheader("Masukkan Fitur untuk Prediksi")
+                preds = model.predict(df_input_scaled)
+                preds_string = ['Jinak' if pred == 0 else 'Ganas' for pred in preds]
+                pred_probs = model.predict_proba(df_input_scaled)
 
-    # Input fields for 30 features
-    features = [
-        "radius1", "texture1", "perimeter1", "area1", "smoothness1", "compactness1", "concavity1",
-        "concave_points1", "symmetry1", "fractal_dimension1", "radius2", "texture2", "perimeter2", 
-        "area2", "smoothness2", "compactness2", "concavity2", "concave_points2", "symmetry2", 
-        "fractal_dimension2", "radius3", "texture3", "perimeter3", "area3", "smoothness3", 
-        "compactness3", "concavity3", "concave_points3", "symmetry3", "fractal_dimension3"
-    ]
+                results = []
 
-    # Create input form for 30 features
-    feature_values = []
-    for feature in features:
-        value = st.number_input(f"Masukkan nilai untuk {feature}", min_value=0.0, step=0.1)
-        feature_values.append(value)
+                for i in range(num_rows):
+                    results.append({
+                        'Observasi_Ke': i + 1,
+                        'Prediksi': preds_string[i],
+                        'Probabilitas Ganas': f'{pred_probs[i][1]*100:.2f}%'
+                    })
 
-    # Create a DataFrame with the input data
-    input_data = pd.DataFrame([feature_values], columns=features)
+                results_df = pd.DataFrame(results)
 
-    # Predict based on the input data
-    if st.button("Prediksi"):
-        prediction = rf_model.predict(input_data)
-        predicted_class = label_encoder.inverse_transform(prediction)
-        st.subheader(f"Hasil Prediksi: {predicted_class[0]}")
+                st.subheader("📊 Hasil Prediksi")
+                st.dataframe(results_df, use_container_width=True)
+
+                @st.cache_data
+                def convert_df_to_csv(df):
+                    return df.to_csv(index=False).encode('utf-8')
+
+                csv_download = convert_df_to_csv(results_df)
+                st.download_button(
+                    label="📥 Unduh Hasil Prediksi (CSV)",
+                    data=csv_download,
+                    file_name=f"prediksi_{uploaded_file.name}.csv",
+                    mime='text/csv',
+                )
+
+            except Exception as e:
+                st.error(f"⚠️ Gagal saat memproses file: {e}")
+                st.warning("Pastikan format CSV Anda sudah benar.") 
+        else:
+            st.info("Menunggu unggahan file CSV...") 
+
+    with tab2_results:
+        st.header("🔬 Evaluasi Model")  
+        st.markdown("Jelajahi performa model prediksi dan analisis clustering.") 
+        st.markdown("---")
+
+        st.subheader("🥇 Evaluasi Model Regresi Logistik (Statis)") 
+        st.markdown("Metrik performa dari model yang sudah dilatih pada set data uji.") 
+
+        st.metric(label="Akurasi Set Uji", value="99.12%")  
+        st.caption("Akurasi: (TP+TN)/(TP+TN+FP+FN)")
+
+        st.write("**Matriks Konfusi:**") 
+        st.image("confusion_matrix.png", caption="Matriks Konfusi Model")
+        st.caption("Menampilkan True Positives, False Positives, True Negatives, False Negatives.") 
+
+        st.write("**Perbandingan ROC AUC:**") 
+        st.image("ROC_AUC_curve.png", caption="Kurva ROC AUC")
+        st.caption("Menampilkan Perbadingan ROC Curve dan Nilai AUC Model Awal dan Tuned.")
+
+        st.subheader("📝 Laporan Klasifikasi (Statis)")  
+        report_text = """
+        **Performa Keseluruhan:**
+        ----------------------------------
+        Kelas        | Presisi | Recall  | F1-Score
+        ----------------------------------
+        Jinak        | 0.99    | 1.00    | 0.99
+        ----------------------------------
+        Ganas        | 1.00    | 0.98    | 0.99
+        ----------------------------------
+        """
+        st.markdown(report_text)
+        st.caption("Detail presisi, recall, dan F1-score per kelas.")
+                
+        st.markdown("---")
+        
+        with st.container(border=True):
+            st.subheader("🧩 Analisis Clustering (Statis)")  
+            st.markdown("Hasil clustering K-Means divisualisasikan dengan PCA pada fitur dari data observasi.")
+
+            st.metric(label=f"Skor Silhouette", value="0.5462", help="Rentang dari -1 hingga 1. Semakin tinggi semakin baik.")  
+            st.caption("Mengukur seberapa mirip suatu objek dengan clusternya sendiri dibandingkan dengan cluster lain.")  
+
+            st.image("cluster.png", caption="Hasil Klasterisasi Data setelah PCA")
+            st.caption("Menampilkan Hasil Klasterisasi Data Dengan Setelah PCA.")
+
+    st.markdown("---")
+    st.caption("© 2025 Kelompok 12 - Dasbor Analisis Tumor Payudara")  
+
+
+if __name__ == '__main__':
+    main()
