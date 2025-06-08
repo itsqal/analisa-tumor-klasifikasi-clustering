@@ -4,6 +4,7 @@ import numpy as np
 import joblib
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import RobustScaler
+from inferenceLLM import getInterpretation
 
 st.set_page_config(
     page_title="Dasbor Analisis Tumor Payudara", 
@@ -40,9 +41,10 @@ def main():
         Selamat Datang! Dashboard ini dapat memberikan prediksi berdasarkan data Anda dan menunjukkan performa model yang kami gunakan.
     """)
 
-    tab1_predict, tab2_results = st.tabs([
+    tab1_predict, tab2_clustering, tab3_cluster_interpretation = st.tabs([
         "📈 Prediksi dari data",
-        "💡 Pemodelan & Clustering" 
+        "📃 Clustering",
+        "💡 Interpretasi Cluster" 
     ])
 
     with tab1_predict:
@@ -80,17 +82,31 @@ def main():
                 st.subheader("📊 Hasil Prediksi")
                 st.dataframe(results_df, use_container_width=True)
 
-                @st.cache_data
-                def convert_df_to_csv(df):
-                    return df.to_csv(index=False).encode('utf-8')
+                # Tambahkan metrik jumlah jinak, ganas, dan total observasi
+                col1, col2, col3 = st.columns(3)
+                total_jinak = (results_df['Prediksi'] == 'Jinak').sum()
+                total_ganas = (results_df['Prediksi'] == 'Ganas').sum()
+                total_obs = len(results_df)
+                col1.metric("Total Jinak", total_jinak)
+                col2.metric("Total Ganas", total_ganas)
+                col3.metric("Total Observasi", total_obs)
 
-                csv_download = convert_df_to_csv(results_df)
-                st.download_button(
-                    label="📥 Unduh Hasil Prediksi (CSV)",
-                    data=csv_download,
-                    file_name=f"prediksi_{uploaded_file.name}.csv",
-                    mime='text/csv',
+                st.markdown("---")
+                st.markdown("### pilih baris hasil prediksi untuk mendapatkan interpretasi analitis:")
+                selected_row = st.selectbox(
+                    "Pilih Observasi untuk Interpretasi:",
+                    options=results_df.index + 1,
+                    format_func=lambda x: f"Observasi ke-{x} ({results_df.loc[x-1, 'Prediksi']}, Prob Ganas: {results_df.loc[x-1, 'Probabilitas Ganas']})"
                 )
+                if selected_row:
+                    idx = selected_row - 1
+                    pred_val = 1 if results_df.loc[idx, 'Prediksi'] == 'Ganas' else 0
+                    prob_ganas = float(results_df.loc[idx, 'Probabilitas Ganas'].replace('%','')) / 100
+                    if st.button(f"Dapatkan Interpretasi untuk Observasi ke-{selected_row}"):
+                        with st.spinner("Mengambil interpretasi dari LLM..."):
+                            llm_result = getInterpretation(pred_val, prob_ganas)
+                        st.success("Interpretasi:")
+                        st.write(llm_result)
 
             except Exception as e:
                 st.error(f"⚠️ Gagal saat memproses file: {e}")
@@ -98,52 +114,42 @@ def main():
         else:
             st.info("Menunggu unggahan file CSV...") 
 
-    with tab2_results:
-        st.header("🔬 Evaluasi Model")  
-        st.markdown("Jelajahi performa model prediksi dan analisis clustering.") 
-        st.markdown("---")
+    with tab2_clustering:
+        st.header("📃 Clustering Data Observasi")
+        st.markdown("Lakukan segmentasi data observasi menggunakan K-Means Clustering.")
+        if uploaded_file is not None:
+            try:
+                model_kmeans = joblib.load('kmeans_model.pkl')
+                cluster_labels = model_kmeans.predict(df_input_scaled)
+                results_df_cluster = results_df.copy()
+                results_df_cluster['Cluster'] = cluster_labels
+                st.subheader("📊 Hasil Prediksi + Cluster")
+                st.dataframe(results_df_cluster, use_container_width=True)
+                col1, col2 = st.columns(2)
+                col1.metric("Total Cluster 0", (results_df_cluster['Cluster'] == 0).sum())
+                col2.metric("Total Cluster 1", (results_df_cluster['Cluster'] == 1).sum())
+                st.info("*Cluster 1 cenderung berisi observasi jinak, Cluster 0 cenderung berisi observasi ganas.")
+            except Exception as e:
+                st.error(f"Gagal melakukan clustering: {e}")
+        else:
+            st.info("Unggah file CSV terlebih dahulu untuk melakukan clustering.")
 
-        st.subheader("🥇 Evaluasi Model Regresi Logistik (Statis)") 
-        st.markdown("Metrik performa dari model yang sudah dilatih pada set data uji.") 
-
-        st.metric(label="Akurasi Set Uji", value="99.12%")  
-        st.caption("Akurasi: (TP+TN)/(TP+TN+FP+FN)")
-
-        st.write("**Matriks Konfusi:**") 
-        st.image("confusion_matrix.png", caption="Matriks Konfusi Model")
-        st.caption("Menampilkan True Positives, False Positives, True Negatives, False Negatives.") 
-
-        st.write("**Perbandingan ROC AUC:**") 
-        st.image("ROC_AUC_curve.png", caption="Kurva ROC AUC")
-        st.caption("Menampilkan Perbadingan ROC Curve dan Nilai AUC Model Awal dan Tuned.")
-
-        st.subheader("📝 Laporan Klasifikasi (Statis)")  
-        report_text = """
-        **Performa Keseluruhan:**
-        ----------------------------------
-        Kelas        | Presisi | Recall  | F1-Score
-        ----------------------------------
-        Jinak        | 0.99    | 1.00    | 0.99
-        ----------------------------------
-        Ganas        | 1.00    | 0.98    | 0.99
-        ----------------------------------
-        """
-        st.markdown(report_text)
-        st.caption("Detail presisi, recall, dan F1-score per kelas.")
-                
-        st.markdown("---")
+    with tab3_cluster_interpretation:
+        st.header("💡 Interpretasi Cluster")
+        st.markdown("""
+        **Cluster 0**: 
+        - Cenderung berisi observasi dengan label asli ganas.
+        - Distribusi data lebih tersebar dan beragam untuk setiap fitur.
+        - Menunjukkan variasi yang lebih tinggi pada data observasi sel tumor ganas.
         
-        with st.container(border=True):
-            st.subheader("🧩 Analisis Clustering (Statis)")  
-            st.markdown("Hasil clustering K-Means divisualisasikan dengan PCA pada fitur dari data observasi.")
-
-            st.metric(label=f"Skor Silhouette", value="0.5462", help="Rentang dari -1 hingga 1. Semakin tinggi semakin baik.")  
-            st.caption("Mengukur seberapa mirip suatu objek dengan clusternya sendiri dibandingkan dengan cluster lain.")  
-
-            st.image("cluster.png", caption="Hasil Klasterisasi Data setelah PCA")
-            st.caption("Menampilkan Hasil Klasterisasi Data Dengan Setelah PCA.")
-
-    st.markdown("---")
+        **Cluster 1**:
+        - Cenderung berisi observasi dengan label asli jinak.
+        - Distribusi data lebih seragam dan outlier lebih sedikit.
+        - Karakteristik fitur lebih homogen.
+        """)
+        st.image("cluster.png", caption="Visualisasi Hasil Clustering (PCA)")
+        st.caption("Visualisasi hasil clustering K-Means pada data observasi menggunakan PCA.")
+        
     st.caption("© 2025 Kelompok 12 - Dasbor Analisis Tumor Payudara")  
 
 
